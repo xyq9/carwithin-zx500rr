@@ -1,0 +1,51 @@
+name: build-zx500rr-ipa
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack source bundle
+        run: |
+          rm -rf src && mkdir -p src
+          unzip -q CarWithin-1.0.5-zx500rr-src.zip -d src
+          ls src
+      - name: Stage accessory identity
+        working-directory: src
+        run: |
+          mkdir -p App/BundledIdentity
+          curl -L --fail -sS -o /tmp/official.ipa https://github.com/xmz28/CarWithin/releases/download/v1.0.5/CarWithin-1.0.5-unsigned.ipa
+          rm -rf /tmp/off && mkdir -p /tmp/off && unzip -q /tmp/official.ipa -d /tmp/off
+          cp /tmp/off/Payload/TDSCarKit.app/certificate.p7b /tmp/off/Payload/TDSCarKit.app/leaf.cer /tmp/off/Payload/TDSCarKit.app/private.x963 App/BundledIdentity/
+          ls -l App/BundledIdentity
+      - name: Generate Xcode project
+        working-directory: src
+        run: |
+          python3 Tools/generate_project.py
+          ls -d *.xcodeproj
+      - name: Build
+        working-directory: src
+        run: |
+          set -o pipefail
+          xcodebuild -project TDSCarKit.xcodeproj -scheme TDSCarKit -configuration Release -sdk iphoneos -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build 2>&1 | tee /tmp/x.log | tail -200
+      - name: Package ipa
+        if: always()
+        working-directory: src
+        run: |
+          APP=$(find build/dd/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          echo "APP=$APP"
+          rm -rf out && mkdir -p out/Payload
+          if [ -n "$APP" ]; then cp -R "$APP" out/Payload/; fi
+          cd out && zip -qry CarWithin-1.0.5-zx500rr-unsigned.ipa Payload && ls -l
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: carwithin-ipa
+          path: |
+            src/out/*.ipa
+            /tmp/x.log
